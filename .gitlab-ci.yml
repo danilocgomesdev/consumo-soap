@@ -1,0 +1,58 @@
+image: registry.fieg.com.br/maven:3-eclipse-temurin-8
+
+stages:
+  - deploy
+
+variables:
+  MAVEN_OPTS: "-Dhttps.protocols=TLSv1.2 -Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository -Dorg.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener=WARN -Dorg.slf4j.simpleLogger.showDateTime=true -Djava.awt.headless=true"
+  MAVEN_CLI_OPTS: "--batch-mode --errors --fail-at-end --show-version -DinstallAtEnd=true -DdeployAtEnd=true -s settings.xml"
+  GIT_SUBMODULE_STRATEGY: recursive
+
+.run when master changes: &default_template
+  tags:
+    - k8s-dev-runner
+  only:
+    - master
+
+.run when a tag is created: &tag_template
+  tags:
+    - production
+  only:
+    - tags  
+
+.pre build scripts: &prebuild
+  - 'curl -k --header "PRIVATE-TOKEN: $GITLAB_TOKEN_GET_RAW" "https://git.fieg.com.br/api/v4/projects/templates%2Fmaven-settings/repository/files/settings.xml/raw?ref=master" -o ./settings.xml'
+
+.maven build: &maven_template
+  stage: deploy
+  variables: 
+    VERSION_QUALIFIER: ""
+  script:
+    - *prebuild
+    - mvn versions:set -DnewVersion=${CI_COMMIT_REF_NAME}${VERSION_QUALIFIER}
+    - mvn ${MAVEN_CLI_OPTS} -DskipTests deploy ${MAVEN_PROFILE}
+  artifacts:
+    expire_in: 10 mins
+    paths: 
+      - ./target/*.jar
+      - ./pom.xml
+  cache:
+    key: "MAVEN_${CI_PROJECT_NAME}"
+    paths:
+      - $CI_PROJECT_DIR/.m2/repository
+    
+
+snapshot deploy:
+  <<: *default_template
+  <<: *maven_template
+  before_script:
+    - export VERSION_QUALIFIER=${CI_COMMIT_SHORT_SHA}-SNAPSHOT
+    - echo $VERSION_QUALIFIER
+
+release deploy:
+  <<: *tag_template
+  <<: *maven_template
+  variables:
+    VERSION_QUALIFIER: ""
+
+      
